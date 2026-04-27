@@ -45,7 +45,7 @@ Serial port: **COM5** (Nicla). Kill any open monitor before flashing — serial 
 
 Cloned from "Syntiant-RC-Go-Stop-NDP120" (412552). The clone is what gives us the `syntiant-nicla-ndp120` deployment target — generic EI projects can't export `.synpkg`.
 
-- API key: keep in a local environment variable named `EI_API_KEY`; do not commit it.
+- API key: keep in local `.env` as `EI_API_KEY=...`; do not commit `.env`. Use `.env.example` as the template.
 - Classes: `monkey` + `z_openset` (negative catch-all, must be alphabetically last for Syntiant)
 - Posterior params: `monkey` phth=0.7, phwin=5, phbackoff=20
 
@@ -64,8 +64,13 @@ python src/ei_pipeline.py upload
 # 3. SET POSTERIOR PARAMS (the easy-to-forget step):
 python -c "
 import os
+from pathlib import Path
 import edgeimpulse_api
 from edgeimpulse.experimental import api as exp_api
+for line in Path('.env').read_text().splitlines():
+    if line.strip() and not line.strip().startswith('#') and '=' in line:
+        key, value = line.split('=', 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('\"').strip(\"'\"))
 client = exp_api.EdgeImpulseApi(key=os.environ['EI_API_KEY'])
 params = {'ph_type':'SC','states':[{'timeout':0,'timeout_action':'stay','timeout_action_arg':0,
   'classes':[{'label':'monkey','phwin':5,'phth':0.7,'phbackoff':20,
