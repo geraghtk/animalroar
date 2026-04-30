@@ -1,28 +1,9 @@
-// AnimalRaw — ESP32 intensity gate
-//
-// Wiring:
-//   INMP441 MEMS mic              ESP32
-//     VDD  ────────────────────── 3V3
-//     GND  ────────────────────── GND
-//     L/R  ────────────────────── GND   (selects left channel)
-//     WS   ────────────────────── GPIO 25
-//     SCK  ────────────────────── GPIO 32
-//     SD   ────────────────────── GPIO 33
-//
-//   Nicla Voice                   ESP32
-//     GPIO 5 (DETECT_OUT_PIN) ─── GPIO 4    (input, "monkey detected")
-//     GND  ────────────────────── GND       (common ground REQUIRED)
-//
-//   Maglock relay module          ESP32
-//     IN   ────────────────────── GPIO 13
-//     VCC  ────────────────────── 5V (or 3V3 if relay supports it)
-//     GND  ────────────────────── GND
-//   Maglock circuit goes through the relay's COM/NO contacts.
-//   If your relay is active-LOW, flip RELAY_ACTIVE below.
+// AnimalRaw — ESP32 intensity gate. See docs/wiring.md for the full topology.
 
 #include <Arduino.h>
 #include <driver/i2s.h>
 #include <math.h>
+#include <Adafruit_NeoPixel.h>
 
 // ── Pins ──────────────────────────────────────────────────────────────────────
 #define I2S_WS        25
@@ -31,6 +12,12 @@
 #define MONKEY_IN_PIN  4   // input from Nicla DETECT_OUT_PIN
 #define RELAY_PIN     13   // output to maglock relay
 #define RELAY_ACTIVE  HIGH // level that releases the lock
+#define STATUS_PIN    26   // 7-pixel WS2812B (red idle / green detected)
+#define METER_PIN     27   // 16-pixel ring (intensity meter)
+
+#define STATUS_NUM_PIXELS  7
+#define METER_NUM_PIXELS  16
+#define LED_BRIGHTNESS    64   // 0–255; keeps peak current sane
 
 // ── Tuning ────────────────────────────────────────────────────────────────────
 #define SAMPLE_RATE         16000
@@ -45,6 +32,9 @@ static float currentRms = 0;
 static unsigned long lastLoudMs = 0;
 static unsigned long unlockTime = 0;
 static bool unlocked = false;
+
+static Adafruit_NeoPixel statusRing(STATUS_NUM_PIXELS, STATUS_PIN, NEO_GRB + NEO_KHZ800);
+static Adafruit_NeoPixel meterRing(METER_NUM_PIXELS,   METER_PIN,  NEO_GRB + NEO_KHZ800);
 
 // ── I2S setup ─────────────────────────────────────────────────────────────────
 static void setupI2S() {
@@ -99,6 +89,35 @@ static void doRelock() {
   Serial.println("RELOCK");
 }
 
+// 7-pixel status ring: solid red while idle, solid green while monkey is detected.
+static void updateStatusRing(bool monkeyDetected) {
+  uint32_t color = monkeyDetected ? statusRing.Color(0, 255, 0)
+                                  : statusRing.Color(255, 0, 0);
+  for (uint16_t i = 0; i < STATUS_NUM_PIXELS; i++) {
+    statusRing.setPixelColor(i, color);
+  }
+  statusRing.show();
+}
+
+// 16-pixel intensity meter: number of lit pixels = currentRms / INTENSITY_THRESHOLD,
+// coloured green→yellow→red along the ring so the visual gets "hotter" as it fills.
+static void updateMeterRing(float rms) {
+  int lit = (int)((rms / (float)INTENSITY_THRESHOLD) * METER_NUM_PIXELS);
+  if (lit < 0) lit = 0;
+  if (lit > METER_NUM_PIXELS) lit = METER_NUM_PIXELS;
+
+  for (int i = 0; i < METER_NUM_PIXELS; i++) {
+    if (i < lit) {
+      // Hue from 96 (green) at i=0 down to 0 (red) at i=METER_NUM_PIXELS-1
+      uint16_t hue = (uint16_t)((96UL * (METER_NUM_PIXELS - 1 - i)) / (METER_NUM_PIXELS - 1));
+      meterRing.setPixelColor(i, meterRing.ColorHSV(hue * 256, 255, 255));
+    } else {
+      meterRing.setPixelColor(i, 0);
+    }
+  }
+  meterRing.show();
+}
+
 void setup() {
   Serial.begin(115200);
   delay(500);
@@ -106,6 +125,13 @@ void setup() {
   pinMode(MONKEY_IN_PIN, INPUT);
   pinMode(RELAY_PIN, OUTPUT);
   doRelock();          // safe default
+
+  statusRing.begin();
+  statusRing.setBrightness(LED_BRIGHTNESS);
+  meterRing.begin();
+  meterRing.setBrightness(LED_BRIGHTNESS);
+  updateStatusRing(false);
+  updateMeterRing(0);
 
   setupI2S();
   Serial.println("ESP32 intensity gate ready");
@@ -126,6 +152,9 @@ void loop() {
   if (unlocked && (millis() - unlockTime >= UNLOCK_DURATION_MS)) {
     doRelock();
   }
+
+  updateStatusRing(monkeyDetected);
+  updateMeterRing(currentRms);
 
   // Status print every ~500 ms — useful for tuning INTENSITY_THRESHOLD
   static unsigned long lastStatus = 0;
