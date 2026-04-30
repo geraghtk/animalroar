@@ -16,7 +16,7 @@ audio → Nicla Voice (NDP120 classifier)
          Relay → maglock
 ```
 
-Common ground between the two boards is required.
+Common ground between the two boards is required. Full pin-by-pin wiring is in `docs/wiring.md` (and `boards/ABX00061-full-pinout.pdf` is the upstream Nicla Voice pinout — there are no silkscreen labels on the pads, so the PDF is load-bearing).
 
 The Nicla's mic is locked behind the NDP120 in keyword-spotting deployment mode — you can't read raw audio from it. That's why intensity is offloaded to the ESP32 with its own mic.
 
