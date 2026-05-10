@@ -39,7 +39,7 @@ pio run --target monitor
 C:/Users/Kevin/AppData/Local/Packages/PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0/LocalCache/local-packages/Python313/Scripts/pio.exe
 ```
 
-Serial port: **COM5** (Nicla). Kill any open monitor before flashing — serial can only be open in one process. If the Nicla doesn't enumerate, the USB cable must be data-capable (not power-only).
+Serial port: **COM6** (Nicla). Kill any open monitor before flashing — serial can only be open in one process. If the Nicla doesn't enumerate, the USB cable must be data-capable (not power-only).
 
 ## Edge Impulse — project 975711
 
@@ -99,7 +99,7 @@ The Nicla SPI flash holds the synpkgs separately from the MCU firmware. The EI u
 
 # 2. Format SPI flash + upload synpkgs (-f formats, -p programs)
 cd deployment/syntiant-nicla-ndp120/ndp120
-python ei_uploader.py -s COM5 -f -p \
+python ei_uploader.py -s COM6 -f -p \
   -a "C:/Users/Kevin/AnimalRaw/deployment/syntiant-nicla-ndp120/ndp120/syntiant-uploader-win.exe"
 
 # 3. Reflash the prop firmware
