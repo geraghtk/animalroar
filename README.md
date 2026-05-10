@@ -11,7 +11,7 @@ audio -> Nicla Voice / Syntiant NDP120 classifier
           GPIO 5 HIGH when "monkey" is detected
           |
           v
-          ESP32 + INMP441 I2S microphone
+          ESP32 + MAX9814 analog microphone (ADC1_CH6 / GPIO 34)
           checks recent RMS level against intensity threshold
           |
           v
@@ -24,7 +24,7 @@ The Nicla and ESP32 must share ground. The ESP32 is responsible for the final ma
 
 - Arduino Nicla Voice
 - ESP32 development board
-- INMP441 I2S microphone for intensity measurement
+- MAX9814 electret microphone + AGC amp for intensity measurement (analog out into ESP32 ADC)
 - Relay, MOSFET driver, or other maglock driver circuit
 - Maglock and suitable power supply
 

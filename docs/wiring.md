@@ -1,6 +1,6 @@
 # Wiring
 
-The breadboard is a wiring hub, not a mounting surface. The only thing physically on it is a USB power module driving 5 V / 3.3 V / GND rails; everything else (Nicla Voice, ESP32, INMP441 mic, relay module, two NeoPixel rings) lives off-board and connects to the rails — and to each other — via flying wires. The maglock has its own supply; only its switching contacts touch the relay.
+The breadboard is a wiring hub, not a mounting surface. The only thing physically on it is a USB power module driving 5 V / 3.3 V / GND rails; everything else (Nicla Voice, ESP32, MAX9814 mic, relay module, two NeoPixel rings) lives off-board and connects to the rails — and to each other — via flying wires. The maglock has its own supply; only its switching contacts touch the relay.
 
 Two indicator NeoPixels, both driven by the ESP32:
 - **7-pixel WS2812B** — listening state. Red while idle, green when the Nicla reports a detection.
@@ -17,7 +17,7 @@ Off-board modules (each connects to the rails by flying wires)
 ──────────────────────────────────────────────────────────────
   Nicla Voice
   ESP32
-  INMP441 mic
+  MAX9814 mic
   Relay module
   7-pixel WS2812B    (status: red → green)
   16-pixel ring      (intensity meter)
@@ -27,15 +27,14 @@ Power
   5V rail   ──▶ Nicla VIN (J2-9)
             ──▶ ESP32 VIN
             ──▶ Relay VCC
+            ──▶ MAX9814 VDD                 (also fine on 3V3; 5 V gives best headroom)
             ──▶ 7-pixel ring  VCC
             ──▶ 16-pixel ring VCC
-
-  3V3 rail  ──▶ INMP441 VDD
 
   GND rail  ──▶ Nicla GND (J2-6)
             ──▶ ESP32 GND
             ──▶ Relay GND
-            ──▶ INMP441 GND + L/R          (L/R tied to GND = left channel)
+            ──▶ MAX9814 GND
             ──▶ 7-pixel ring  GND
             ──▶ 16-pixel ring GND
 
@@ -44,9 +43,7 @@ Power
 Signals (3.3 V logic, direct module-to-module jumpers)
 ──────────────────────────────────────────────────────
   Nicla J1-1 (D5)  ──▶ ESP32 GPIO 4        "monkey detected"
-  ESP32 GPIO 25    ──▶ INMP441 WS
-  ESP32 GPIO 32    ──▶ INMP441 SCK
-  ESP32 GPIO 33    ◀── INMP441 SD          (audio data into ESP32)
+  MAX9814 OUT      ──▶ ESP32 GPIO 34       (analog audio in, ADC1_CH6)
   ESP32 GPIO 13    ──▶ Relay IN
   ESP32 GPIO 26    ──▶ 7-pixel ring  DIN   (status indicator)
   ESP32 GPIO 27    ──▶ 16-pixel ring DIN   (intensity meter)
@@ -65,10 +62,10 @@ The two pin numbers above the link are the only place this needs to stay in sync
 | USB power module GND out  | Breadboard GND rail  | — |
 | 5 V rail | Nicla **VIN (J2-9)** | 5 V — *not* 3V3, the on-board PMIC needs 5 V |
 | 5 V rail | ESP32 **VIN** (or 5V pin, depending on dev board) | 5 V |
-| 5 V rail | Relay module **VCC** | 5 V |
+| 5 V rail | Relay module **DC+** | 5 V |
+| 5 V rail | MAX9814 **VDD** | 5 V (3V3 also works; 5 V gives more headroom before AGC clips) |
 | 5 V rail | 7-pixel WS2812B **VCC**, 16-pixel ring **VCC** | 5 V |
-| 3V3 rail | INMP441 **VDD** | 3.3 V |
-| GND rail | Nicla **J2-6**, ESP32 **GND**, INMP441 **GND** + **L/R**, Relay **GND**, both rings **GND** | — |
+| GND rail | Nicla **J2-6**, ESP32 **GND**, MAX9814 **GND**, Relay **DC-**, both rings **GND** | — |
 
 One common GND across everything — that's what gives the digital signals a meaningful reference.
 
@@ -122,27 +119,32 @@ If that works, the rest is just `digitalRead` on the ESP32 side.
 
 Lifted from `esp32/src/main.cpp:3-21`:
 
-### INMP441 MEMS mic (I2S input for intensity gate)
+### MAX9814 electret mic + AGC amp (analog input for intensity gate)
 
-| INMP441 | Connected to |
+| MAX9814 | Connected to |
 |---|---|
-| VDD | 3V3 rail |
+| VDD | 5 V rail (3V3 also works) |
 | GND | GND rail |
-| L/R | GND rail (selects left channel) |
-| WS  | ESP32 GPIO 25 |
-| SCK | ESP32 GPIO 32 |
-| SD  | ESP32 GPIO 33 |
+| OUT | ESP32 **GPIO 34** (ADC1_CH6, input-only — leave the internal pull-up off) |
+| Gain | **floating** (default 60 dB). Tie to VDD for 40 dB or to GND for 50 dB if it's too hot. |
+| A/R | floating (default attack/release ratio is fine for shouty kids) |
 
-### Maglock relay
+The OUT signal sits on a ~1.25 V DC bias and swings around it; the firmware subtracts the per-window mean before computing RMS, so the bias drops out and the AGC can move the bias around freely without confusing the gate.
 
-| Relay module | Connected to |
+Pair the mic with a short shielded cable if you can — the ESP32's switching power supply and the NeoPixel data lines will couple noise into a long unshielded analog run.
+
+### Maglock relay (5 V module — DC+ / DC- / IN, NO / COM / NC)
+
+| Relay terminal | Connected to |
 |---|---|
+| DC+ | 5 V rail |
+| DC- | GND rail |
 | IN  | ESP32 GPIO 13 |
-| VCC | 5 V rail |
-| GND | GND rail |
-| COM / NO | Maglock circuit (separate PSU) |
+| COM | One side of the maglock circuit (separate PSU) |
+| NO  | Other side of the maglock circuit — closes when relay energises (releases lock) |
+| NC  | Unused (would be closed at idle) |
 
-If the relay is active-LOW, flip `RELAY_ACTIVE` in `esp32/src/main.cpp`.
+If the relay is active-LOW (some 5 V modules have an inverting opto driver — the LED on the board lights when IN is *grounded*), flip `RELAY_ACTIVE` in `esp32/src/main.cpp` to `LOW`.
 
 ### NeoPixel indicators (WS2812B)
 

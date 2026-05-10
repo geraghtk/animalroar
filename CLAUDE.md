@@ -10,7 +10,7 @@ Status: **working end-to-end** as of 2026-04-27 (Nicla side fully functional; ES
 audio → Nicla Voice (NDP120 classifier)
          │ GPIO 5 = "monkey detected" (HIGH for 5s on unlock)
          ▼
-         ESP32 + INMP441 I2S mic
+         ESP32 + MAX9814 analog mic (ADC1_CH6 / GPIO 34)
          │ ANDs Nicla signal with RMS > INTENSITY_THRESHOLD
          ▼
          Relay → maglock
@@ -18,7 +18,7 @@ audio → Nicla Voice (NDP120 classifier)
 
 Common ground between the two boards is required. Full pin-by-pin wiring is in `docs/wiring.md` (and `boards/ABX00061-full-pinout.pdf` is the upstream Nicla Voice pinout — there are no silkscreen labels on the pads, so the PDF is load-bearing).
 
-The Nicla's mic is locked behind the NDP120 in keyword-spotting deployment mode — you can't read raw audio from it. That's why intensity is offloaded to the ESP32 with its own mic.
+The Nicla's mic is locked behind the NDP120 in keyword-spotting deployment mode — you can't read raw audio from it. That's why intensity is offloaded to the ESP32 with its own mic (a MAX9814 — analog electret + AGC, sampled via ADC1).
 
 ## Build & flash
 
@@ -117,7 +117,7 @@ pio run -e nicla_voice --target upload
 | EI Studio (rebuild) | `phwin` | 5 | Frames of sustained confidence |
 | Nicla `main.ino` | `DEBOUNCE_FRAMES` | 3 | NDP matches before unlock |
 | Nicla `main.ino` | `UNLOCK_DURATION_MS` | 5000 | DETECT_OUT_PIN HIGH duration |
-| ESP32 `main.cpp` | `INTENSITY_THRESHOLD` | 3000 | RMS gate (raise if speech triggers) |
+| ESP32 `main.cpp` | `INTENSITY_THRESHOLD` | 200 | RMS gate, in 12-bit ADC counts (raise if speech triggers) |
 | ESP32 `main.cpp` | `INTENSITY_WINDOW_MS` | 2000 | "Recently loud" lookback |
 
 The first three (Nicla side) interact: a louder/clearer monkey sound clears more frames at higher confidence and fires more matches in succession. There's no separate "intensity" reading on the Nicla — that's why the ESP32 exists.

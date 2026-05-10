@@ -1,14 +1,11 @@
 // AnimalRaw — ESP32 intensity gate. See docs/wiring.md for the full topology.
 
 #include <Arduino.h>
-#include <driver/i2s.h>
 #include <math.h>
 #include <Adafruit_NeoPixel.h>
 
 // ── Pins ──────────────────────────────────────────────────────────────────────
-#define I2S_WS        25
-#define I2S_SCK       32
-#define I2S_SD        33
+#define MIC_ADC_PIN   34   // MAX9814 OUT → ADC1_CH6 (input-only, ADC1 = WiFi-safe)
 #define MONKEY_IN_PIN  4   // input from Nicla DETECT_OUT_PIN
 #define RELAY_PIN     13   // output to maglock relay
 #define RELAY_ACTIVE  HIGH // level that releases the lock
@@ -20,14 +17,13 @@
 #define LED_BRIGHTNESS    64   // 0–255; keeps peak current sane
 
 // ── Tuning ────────────────────────────────────────────────────────────────────
-#define SAMPLE_RATE         16000
-#define I2S_FRAMES_PER_READ   512   // ~32 ms windows
-#define INTENSITY_THRESHOLD  3000   // RMS gate — tune empirically (see logs)
-#define INTENSITY_WINDOW_MS  2000   // "recently loud" lookback
-#define UNLOCK_DURATION_MS   5000   // ms maglock stays released
+#define ADC_SAMPLES_PER_WINDOW 1024  // ~13 ms at ~75 kHz analogRead rate
+#define INTENSITY_THRESHOLD     200  // RMS in ADC counts — tune empirically (see logs)
+#define INTENSITY_WINDOW_MS    2000  // "recently loud" lookback
+#define UNLOCK_DURATION_MS     5000  // ms maglock stays released
 
 // ── State ─────────────────────────────────────────────────────────────────────
-static int32_t i2sBuf[I2S_FRAMES_PER_READ];
+static uint16_t adcBuf[ADC_SAMPLES_PER_WINDOW];
 static float currentRms = 0;
 static unsigned long lastLoudMs = 0;
 static unsigned long unlockTime = 0;
@@ -36,44 +32,28 @@ static bool unlocked = false;
 static Adafruit_NeoPixel statusRing(STATUS_NUM_PIXELS, STATUS_PIN, NEO_GRB + NEO_KHZ800);
 static Adafruit_NeoPixel meterRing(METER_NUM_PIXELS,   METER_PIN,  NEO_GRB + NEO_KHZ800);
 
-// ── I2S setup ─────────────────────────────────────────────────────────────────
-static void setupI2S() {
-  i2s_config_t cfg = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-    .sample_rate = SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
-    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = 4,
-    .dma_buf_len = I2S_FRAMES_PER_READ,
-    .use_apll = false,
-    .tx_desc_auto_clear = false,
-    .fixed_mclk = 0,
-  };
-  i2s_pin_config_t pins = {
-    .bck_io_num = I2S_SCK,
-    .ws_io_num  = I2S_WS,
-    .data_out_num = I2S_PIN_NO_CHANGE,
-    .data_in_num  = I2S_SD,
-  };
-  i2s_driver_install(I2S_NUM_0, &cfg, 0, nullptr);
-  i2s_set_pin(I2S_NUM_0, &pins);
+// ── ADC setup ─────────────────────────────────────────────────────────────────
+static void setupAdc() {
+  analogReadResolution(12);                  // 0–4095
+  analogSetPinAttenuation(MIC_ADC_PIN, ADC_11db);  // full 0–~3.3 V range
 }
 
-// INMP441 outputs 24-bit data left-aligned in a 32-bit slot, so shift right 14
-// to land in a sane int range. Compute RMS over the read window.
+// MAX9814 outputs an analog audio signal centred on a ~1.25 V DC bias. We sample
+// fast in a tight loop, subtract the per-window mean (handles bias drift +
+// AGC-induced level shifts), then RMS the residual. Result is in ADC counts.
 static void readMicAndComputeRms() {
-  size_t bytesRead = 0;
-  i2s_read(I2S_NUM_0, i2sBuf, sizeof(i2sBuf), &bytesRead, portMAX_DELAY);
-  int n = bytesRead / sizeof(int32_t);
-  if (n <= 0) { currentRms = 0; return; }
+  uint32_t sum = 0;
+  for (int i = 0; i < ADC_SAMPLES_PER_WINDOW; i++) {
+    adcBuf[i] = analogRead(MIC_ADC_PIN);
+    sum += adcBuf[i];
+  }
+  int32_t mean = sum / ADC_SAMPLES_PER_WINDOW;
   uint64_t sumSq = 0;
-  for (int i = 0; i < n; i++) {
-    int32_t s = i2sBuf[i] >> 14;
+  for (int i = 0; i < ADC_SAMPLES_PER_WINDOW; i++) {
+    int32_t s = (int32_t)adcBuf[i] - mean;
     sumSq += (uint64_t)((int64_t)s * s);
   }
-  currentRms = sqrtf((float)sumSq / n);
+  currentRms = sqrtf((float)sumSq / ADC_SAMPLES_PER_WINDOW);
 }
 
 static void doUnlock() {
@@ -133,7 +113,7 @@ void setup() {
   updateStatusRing(false);
   updateMeterRing(0);
 
-  setupI2S();
+  setupAdc();
   Serial.println("ESP32 intensity gate ready");
 }
 
